@@ -1,0 +1,576 @@
+openapi: "3.1.0"
+
+info:
+  title: Loan Amortization API
+  version: "1.0.0"
+  description: |
+    API para simular el cuadro de amortización de préstamos bancarios bajo el **método francés** (cuota fija mensual).
+
+    ## Metodología
+    Este archivo es la **fuente de verdad** del contrato (API-First Design).
+    La implementación en C# debe cumplir este spec. Nunca al revés.
+
+    ## Fórmula — Método Francés
+    ```
+    r   = annual_rate / 100 / 12
+    PMT = principal × r / (1 − (1 + r)^(−term_months))
+
+    Por cada mes i:
+      interest_i  = balance_{i-1} × r
+      capital_i   = PMT − interest_i
+      balance_i   = balance_{i-1} − capital_i
+    ```
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Desarrollo local
+
+tags:
+  - name: Auth
+    description: Registro e inicio de sesión
+  - name: Simulaciones
+    description: Calcular, guardar y comparar simulaciones de préstamos
+  - name: Sistema
+    description: Estado de la API
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT obtenido desde `POST /auth/login`
+
+  schemas:
+
+    # ──────────────────────────────────────────
+    # Auth
+    # ──────────────────────────────────────────
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: usuario@ejemplo.com
+        password:
+          type: string
+          minLength: 8
+          example: "secreto123"
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: usuario@ejemplo.com
+        password:
+          type: string
+          example: "secreto123"
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT Bearer token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        user_id:
+          type: string
+          format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+
+    # ──────────────────────────────────────────
+    # Simulación
+    # ──────────────────────────────────────────
+
+    SimulateRequest:
+      type: object
+      required: [currency, principal, annual_rate, term_months]
+      properties:
+        currency:
+          type: string
+          enum: [USD, PEN]
+          description: Moneda del préstamo
+          example: "USD"
+        principal:
+          type: number
+          minimum: 0.01
+          description: Monto total a prestar
+          example: 10000.00
+        annual_rate:
+          type: number
+          minimum: 0.01
+          maximum: 100
+          description: "Tasa de interés anual en porcentaje. Ej: 12.0 = 12% anual"
+          example: 12.0
+        term_months:
+          type: integer
+          minimum: 1
+          maximum: 360
+          description: Plazo del préstamo en meses
+          example: 12
+        save:
+          type: boolean
+          default: false
+          description: |
+            Si `true`, guarda la simulación para el usuario autenticado.
+            Requiere JWT Bearer cuando `save: true`. Sin JWT y `save: true` → 401.
+
+    InstallmentRow:
+      type: object
+      description: Una fila del cuadro de amortización
+      properties:
+        month:
+          type: integer
+          description: Número de cuota (1-based)
+          example: 1
+        payment:
+          type: number
+          description: Cuota total del mes (interest + capital)
+          example: 888.49
+        interest:
+          type: number
+          description: Porción de interés en la cuota
+          example: 100.00
+        capital:
+          type: number
+          description: Porción de capital amortizado
+          example: 788.49
+        remaining_balance:
+          type: number
+          description: Saldo restante tras este pago
+          example: 9211.51
+
+    SimulateResponse:
+      type: object
+      properties:
+        simulation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "ID de la simulación guardada. `null` si `save: false`."
+          example: null
+        currency:
+          type: string
+          enum: [USD, PEN]
+          example: "USD"
+        principal:
+          type: number
+          example: 10000.00
+        annual_rate:
+          type: number
+          example: 12.0
+        term_months:
+          type: integer
+          example: 12
+        monthly_payment:
+          type: number
+          description: Cuota fija mensual (PMT)
+          example: 888.49
+        total_payment:
+          type: number
+          description: Total desembolsado al final del préstamo
+          example: 10661.85
+        total_interest:
+          type: number
+          description: Total de intereses pagados (total_payment − principal)
+          example: 661.85
+        schedule:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstallmentRow'
+
+    SimulationSummary:
+      type: object
+      description: Resumen de una simulación guardada (sin tabla de cuotas)
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        currency:
+          type: string
+          enum: [USD, PEN]
+          example: "USD"
+        principal:
+          type: number
+          example: 10000.00
+        annual_rate:
+          type: number
+          example: 12.0
+        term_months:
+          type: integer
+          example: 12
+        monthly_payment:
+          type: number
+          example: 888.49
+        total_payment:
+          type: number
+          example: 10661.85
+        total_interest:
+          type: number
+          example: 661.85
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-09-07T10:30:00Z"
+
+    SimulationDetail:
+      allOf:
+        - $ref: '#/components/schemas/SimulationSummary'
+        - type: object
+          properties:
+            schedule:
+              type: array
+              items:
+                $ref: '#/components/schemas/InstallmentRow'
+
+    # ──────────────────────────────────────────
+    # Comparación
+    # ──────────────────────────────────────────
+
+    CompareRequest:
+      type: object
+      required: [simulation_ids]
+      properties:
+        simulation_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 2
+          maxItems: 10
+          description: IDs de simulaciones guardadas del usuario autenticado
+          example:
+            - "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+            - "7b2a1c3d-8e4f-5678-a9b0-1c2d3e4f5a6b"
+
+    CompareResponse:
+      type: object
+      properties:
+        simulations:
+          type: array
+          description: Resúmenes de cada simulación, en el mismo orden que los IDs enviados
+          items:
+            $ref: '#/components/schemas/SimulationSummary'
+
+    # ──────────────────────────────────────────
+    # Sistema
+    # ──────────────────────────────────────────
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-09-07T10:30:00Z"
+
+    ProblemDetails:
+      type: object
+      description: Error estándar RFC 9457
+      properties:
+        type:
+          type: string
+          example: "https://tools.ietf.org/html/rfc9110#section-15.5.1"
+        title:
+          type: string
+          example: "Bad Request"
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          example: "El campo 'annual_rate' debe ser mayor a 0."
+        instance:
+          type: string
+          example: "/api/v1/simulate"
+
+# ──────────────────────────────────────────────
+# Paths
+# ──────────────────────────────────────────────
+
+paths:
+
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Estado de la API
+      operationId: get-health
+      responses:
+        "200":
+          description: API operativa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Registrar nuevo usuario
+      operationId: auth-register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: usuario@ejemplo.com
+              password: "secreto123"
+      responses:
+        "201":
+          description: Usuario creado — devuelve JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        "400":
+          description: Datos inválidos (email mal formado, contraseña muy corta)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "409":
+          description: El email ya está registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Iniciar sesión
+      operationId: auth-login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: usuario@ejemplo.com
+              password: "secreto123"
+      responses:
+        "200":
+          description: Login exitoso — devuelve JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        "400":
+          description: Datos inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "401":
+          description: Credenciales incorrectas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /simulate:
+    post:
+      tags: [Simulaciones]
+      summary: Calcular tabla de amortización
+      operationId: simulate
+      description: |
+        Calcula el cuadro de amortización completo bajo el **método francés** (cuota fija mensual).
+
+        - `save: false` (default): cálculo efímero, no requiere autenticación.
+        - `save: true`: persiste la simulación para el usuario autenticado. **Requiere JWT.**
+      security:
+        - {}
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulateRequest'
+            examples:
+              calculo_rapido:
+                summary: Cálculo rápido sin guardar (sin auth)
+                value:
+                  currency: "USD"
+                  principal: 10000.00
+                  annual_rate: 12.0
+                  term_months: 12
+                  save: false
+              guardar_simulacion:
+                summary: Simular y guardar (requiere JWT)
+                value:
+                  currency: "PEN"
+                  principal: 50000.00
+                  annual_rate: 18.0
+                  term_months: 36
+                  save: true
+      responses:
+        "200":
+          description: Tabla de amortización calculada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulateResponse'
+              example:
+                simulation_id: null
+                currency: "USD"
+                principal: 10000.00
+                annual_rate: 12.0
+                term_months: 12
+                monthly_payment: 888.49
+                total_payment: 10661.85
+                total_interest: 661.85
+                schedule:
+                  - month: 1
+                    payment: 888.49
+                    interest: 100.00
+                    capital: 788.49
+                    remaining_balance: 9211.51
+                  - month: 2
+                    payment: 888.49
+                    interest: 92.12
+                    capital: 796.37
+                    remaining_balance: 8415.14
+        "400":
+          description: Parámetros inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "401":
+          description: JWT requerido porque `save: true`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /simulations:
+    get:
+      tags: [Simulaciones]
+      summary: Listar simulaciones guardadas del usuario
+      operationId: list-simulations
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Lista de simulaciones del usuario autenticado (sin tabla de cuotas)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SimulationSummary'
+        "401":
+          description: JWT requerido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /simulations/{id}:
+    get:
+      tags: [Simulaciones]
+      summary: Obtener simulación guardada con tabla completa
+      operationId: get-simulation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+      responses:
+        "200":
+          description: Simulación con tabla de amortización recalculada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulationDetail'
+        "401":
+          description: JWT requerido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "403":
+          description: La simulación no pertenece al usuario autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "404":
+          description: Simulación no encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /simulations/compare:
+    post:
+      tags: [Simulaciones]
+      summary: Comparar simulaciones guardadas del usuario
+      operationId: compare-simulations
+      description: |
+        Compara entre 2 y 10 simulaciones guardadas del usuario autenticado.
+        Devuelve los resúmenes lado a lado en el mismo orden que los IDs enviados.
+        Todas las simulaciones deben pertenecer al usuario del JWT.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompareRequest'
+            example:
+              simulation_ids:
+                - "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                - "7b2a1c3d-8e4f-5678-a9b0-1c2d3e4f5a6b"
+      responses:
+        "200":
+          description: Comparación de simulaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompareResponse'
+        "400":
+          description: Menos de 2 IDs, más de 10, o formato inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "401":
+          description: JWT requerido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "403":
+          description: Una o más simulaciones no pertenecen al usuario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "404":
+          description: Una o más simulaciones no encontradas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
