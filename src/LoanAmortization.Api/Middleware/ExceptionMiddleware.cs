@@ -31,6 +31,14 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
         {
             await WriteProblemAsync(context, 401, "Unauthorized", ex.Message);
         }
+        catch (SimulationNotFoundException ex)
+        {
+            await WriteProblemAsync(context, 404, "Not Found", ex.Message);
+        }
+        catch (SimulationForbiddenException ex)
+        {
+            await WriteProblemAsync(context, 403, "Forbidden", ex.Message);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled exception");
