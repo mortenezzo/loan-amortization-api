@@ -22,13 +22,8 @@ REST API for calculating French-method (fixed monthly payment) loan amortization
 cp .env.example .env
 # Edit .env and set JWT_SECRET_KEY to a random string of at least 32 characters
 
-# Build and start everything
+# Build and start everything (migrations run automatically on startup)
 docker-compose up -d
-
-# Apply database migrations (first run only)
-docker-compose exec api dotnet ef database update \
-  --project src/LoanAmortization.Infrastructure \
-  --startup-project src/LoanAmortization.Api
 
 # API is now available at http://localhost:8080
 # Swagger UI: not available in Production mode (see Local Development)
