@@ -3,7 +3,9 @@ using FluentValidation;
 using LoanAmortization.Application.Auth;
 using LoanAmortization.Application.Common.Behaviors;
 using LoanAmortization.Application.Common.Interfaces;
+using LoanAmortization.Application.Simulations;
 using LoanAmortization.Api.Middleware;
+using LoanAmortization.Domain.Services;
 using LoanAmortization.Infrastructure.Auth;
 using LoanAmortization.Infrastructure.Data;
 using LoanAmortization.Infrastructure.Repositories;
@@ -28,6 +30,10 @@ builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBeh
 
 builder.Services.AddScoped<IValidator<RegisterCommand>, RegisterCommandValidator>();
 builder.Services.AddScoped<IValidator<LoginCommand>, LoginCommandValidator>();
+builder.Services.AddScoped<IValidator<SimulateCommand>, SimulateCommandValidator>();
+builder.Services.AddScoped<IValidator<CompareCommand>, CompareCommandValidator>();
+
+builder.Services.AddSingleton<AmortizationCalculator>();
 
 builder.Services.AddScoped<IUserRepository, EfUserRepository>();
 builder.Services.AddScoped<ISimulationRepository, EfSimulationRepository>();
